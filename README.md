@@ -67,6 +67,23 @@ The app runs on Cloud Run in the same GCP project as the data, so no credential 
 gcloud run deploy yamal-scout --source . --region us-central1   --service-account yamal-scout-web@<project>.iam.gserviceaccount.com --allow-unauthenticated   --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest,ACCESS_CODE=yamal-access-code:latest   --set-env-vars GCP_PROJECT=<project>,BQ_LOCATION=US,BQ_MARTS_DATASET=yamal_marts   --memory 1Gi --timeout 300 --max-instances 1 --min-instances 0 --cpu-boost
 ```
 
+## Automatic refresh (Cloud Scheduler + Cloud Run Job)
+
+Cloud Scheduler triggers the Cloud Run Job `yamal-refresh` at **06:00 and 18:00 (Europe/Madrid)**:
+
+1. `ingest_espn.py` reloads the raw match log into BigQuery.
+2. `dbt build` rebuilds and tests the staging view and the marts.
+3. The web app picks up the new data within 30 minutes (its cache TTL).
+
+The job image (`refresh_job/`) holds only the dependencies. Each run downloads the latest `main` of this repo and of [`dbt_yamal_scout`](https://github.com/veilhdmi/dbt_yamal_scout), so a merged change applies on the next run with no rebuild.
+
+The job runs as its own service account, `yamal-scout-refresh`, which can write only to the three Yamal datasets. A failing error-severity dbt test fails the execution, so bad data never reaches the marts silently.
+
+```bash
+gcloud builds submit --config refresh_job/cloudbuild.yaml .           # rebuild the image (only when requirements change)
+gcloud run jobs execute yamal-refresh --region us-central1 --wait     # run it now
+```
+
 ## Cost
 
 - **BigQuery**: within the free tier (~200 rows). Agent queries are capped at 100 MB billed each.
@@ -82,6 +99,5 @@ gcloud run deploy yamal-scout --source . --region us-central1   --service-accoun
 
 ## Next steps
 
-- Schedule ingestion (GitHub Actions cron or Cloud Scheduler) after every matchday.
 - Add minutes played and opponent defensive stats (shots conceded per match) as features.
 - Log every forecast and score it after the match — a live calibration track record.
