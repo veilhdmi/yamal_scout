@@ -1,0 +1,12 @@
+anthropic>=1.1.0
+google-cloud-bigquery
+db-dtypes
+pyarrow
+pandas
+numpy
+scipy
+scikit-learn
+streamlit
+python-dotenv
+requests
+feedparser
