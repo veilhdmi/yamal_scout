@@ -28,7 +28,7 @@ TOOL_DEFINITIONS = [
             "Run a read-only BigQuery SQL SELECT over Lamine Yamal's match-by-match stats. "
             f"The only table is `{FCT_VIEW}` (one row per match he played). Columns: event_id, game_date (TIMESTAMP), "
             "match_date (DATE), season (INT, start year of the season), team ('Barcelona'|'Spain'), opponent, home_away "
-            "('home'|'away'), is_home (BOOL), score (his team's goals first), result ('W'|'D'|'L'), league_slug, "
+            "('home'|'away'), is_home (BOOL), team_goals, opponent_goals, score (his team's goals first), result ('W'|'D'|'L'), league_slug, "
             "competition, competition_type ('league'|'champions_league'|'domestic_cup'|'national_team'|'friendly'), "
             "stage, goals, assists, shots, shots_on_target, fouls_suffered, fouls_committed, offsides, yellow_cards, "
             "red_cards, ingested_at, career_match_number (1 = debut, friendlies counted), is_friendly (BOOL). "
@@ -124,7 +124,10 @@ def _fixtures(team_id: str) -> list[dict]:
         out.append({
             "date_utc": e["date"],
             "team": "Spain" if team_id == ESPN_NATIONAL_TEAM_ID else "Barcelona",
+            "team_id": team_id,
             "opponent": rival["team"]["displayName"] if rival else None,
+            "opponent_id": rival["team"]["id"] if rival else None,
+            "venue": (comp.get("venue") or {}).get("fullName"),
             "home": side["homeAway"] == "home" if side else None,
             "competition": (e.get("league") or {}).get("name") if isinstance(e.get("league"), dict) else None,
             "competition_type": "national_team" if team_id == ESPN_NATIONAL_TEAM_ID else COMPETITION_BY_SLUG.get(slug, "league"),

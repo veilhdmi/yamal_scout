@@ -15,14 +15,15 @@ Google News RSS ─┐                                                          
 ESPN fixtures ───┼──► tools.py ◄── model.py (Poisson / NegBin + backtest)
 Claude web search┘        │
                           ▼
-                 agent.py (Claude, tool loop) ──► app.py (Streamlit chat)
+                 agent.py (Claude, streaming tool loop) ──► server.py (FastAPI + SSE) ──► web/ (dashboard + chat)
 ```
 
 1. **Ingest** — `ingest_espn.py` pulls every match he's played (Barcelona + Spain, all competitions, 2023→today) from ESPN's game log: goals, assists, shots, shots on target, fouls, cards. ESPN returns the full history on each call, so the load is a full refresh (`WRITE_TRUNCATE`) — idempotent, safe to run after every match.
 2. **Transform** — the dbt project [`dbt_yamal_scout`](https://github.com/veilhdmi/dbt_yamal_scout) cleans the raw table (staging) and builds the marts in `yamal_marts`, with 28 data tests (uniqueness, accepted values, a feature-leakage check).
 3. **Model** — `model.py` reads `yamal_marts.fct_lamine_matches` and fits a Poisson regression per stat on pre-match features only (recent form, career average, home/away, competition, experience) and switches to a negative binomial when the data is overdispersed.
 4. **Backtest** — for each of his last 50 matches the model is trained only on earlier matches and scored against a career-average baseline (log-likelihood, Brier score for P(≥1), 80% interval coverage).
-5. **Agent** — `agent.py` runs Claude with four tools (`query_stats`, `predict_stat`, `get_next_matches`, `get_recent_news`) plus Anthropic's web search.
+5. **Agent** — `agent.py` runs Claude with four tools (`query_stats`, `predict_stat`, `get_next_matches`, `get_recent_news`) plus Anthropic's web search, streaming its answer and each tool step as events.
+6. **Web app** — `server.py` (FastAPI) serves a single-page dashboard in `web/` (plain HTML/CSS/JS, no build step): season numbers, next-match countdown, the model's probability distribution for each stat, recent form, a news ticker, and a chat that streams the answer, shows every tool step live and draws a chart for each forecast the agent runs.
 
 ### Current backtest (last 50 matches)
 
@@ -49,7 +50,8 @@ python ingest_espn.py          # load / refresh the raw table
 # then, in dbt_yamal_scout:  dbt build
 python model.py                # print forecasts + backtests
 python agent.py "¿Cuántos tiros al arco hará en su próximo partido?"
-python -m streamlit run app.py # chat UI
+python server.py               # web app on http://localhost:8000
+python server.py --lan         # also reachable from phones on the same Wi-Fi
 ```
 
 ## Cost

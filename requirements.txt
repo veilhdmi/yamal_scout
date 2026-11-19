@@ -6,7 +6,8 @@ pandas
 numpy
 scipy
 scikit-learn
-streamlit
+fastapi
+uvicorn
 python-dotenv
 requests
 feedparser
