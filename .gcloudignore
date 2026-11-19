@@ -1,0 +1,7 @@
+# Never upload secrets or the local venv to Cloud Build.
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+.git/

@@ -54,6 +54,19 @@ python server.py               # web app on http://localhost:8000
 python server.py --lan         # also reachable from phones on the same Wi-Fi
 ```
 
+## Deploy (Google Cloud Run)
+
+The app runs on Cloud Run in the same GCP project as the data, so no credential file ever leaves Google:
+
+- **Identity:** a dedicated service account with `bigquery.jobUser` on the project and read access to the `yamal_marts` dataset only.
+- **Secrets:** the Anthropic key and the chat access code live in Secret Manager and are injected as env vars.
+- **Access:** the dashboard is public. The chat (the only part that spends Anthropic credit) asks for an access code once per browser, with per-IP and global lockouts on wrong codes and a daily cap on questions (`CHAT_LIMIT_PER_DAY`).
+- **One instance** (`--max-instances 1`): chat sessions and rate limits live in process memory. It scales to zero when idle, so the first visit after a while takes a few seconds longer.
+
+```bash
+gcloud run deploy yamal-scout --source . --region us-central1   --service-account yamal-scout-web@<project>.iam.gserviceaccount.com --allow-unauthenticated   --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest,ACCESS_CODE=yamal-access-code:latest   --set-env-vars GCP_PROJECT=<project>,BQ_LOCATION=US,BQ_MARTS_DATASET=yamal_marts   --memory 1Gi --timeout 300 --max-instances 1 --min-instances 0 --cpu-boost
+```
+
 ## Cost
 
 - **BigQuery**: within the free tier (~200 rows). Agent queries are capped at 100 MB billed each.
