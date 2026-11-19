@@ -3,6 +3,7 @@
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const STORE_KEY = "yamal-scout-chat-v1";
+const CODE_KEY = "yamal-scout-code";
 const COMP_LABEL = { league: "LaLiga", champions_league: "Champions", domestic_cup: "Copa", national_team: "Selección" };
 const RESULT_LABEL = { W: "V", D: "E", L: "D" };
 const RESULT_WORD = { W: "Victoria", D: "Empate", L: "Derrota" };
@@ -259,8 +260,48 @@ function fail(sel, err) {
 $("#refresh-btn").addEventListener("click", async (e) => {
   const btn = e.currentTarget;
   btn.classList.add("spinning");
-  try { await fetch("/api/refresh", { method: "POST" }); await loadAll(); } finally { btn.classList.remove("spinning"); }
+  // Recomputing server-side needs the access code; without it this just re-reads the cached data.
+  try { await fetch("/api/refresh", { method: "POST", headers: apiHeaders() }); await loadAll(); } finally { btn.classList.remove("spinning"); }
 });
+
+/* ---------------- access code ---------------- */
+let chatLocked = false;
+function getCode() { try { return localStorage.getItem(CODE_KEY) || ""; } catch { return ""; } }
+function setCode(code) { try { code ? localStorage.setItem(CODE_KEY, code) : localStorage.removeItem(CODE_KEY); } catch { /* ignore */ } }
+function apiHeaders() {
+  const h = { "Content-Type": "application/json" };
+  const code = getCode();
+  if (code) h["X-Access-Code"] = code;
+  return h;
+}
+
+function renderLock(message) {
+  input.disabled = true; sendBtn.disabled = true;
+  const field = el("input", { type: "password", class: "lock-input", placeholder: "Código de acceso", autocomplete: "current-password", "aria-label": "Código de acceso" });
+  const err = el("p", { class: "lock-error", text: message || "" });
+  const form = el("form", { class: "lock" },
+    el("div", { class: "lock-icon", text: "🔒" }),
+    el("p", {}, el("b", { text: "Chat privado" }), el("br"), "Escribe el código de acceso para hablar con el scout. El panel es público."),
+    field,
+    el("button", { type: "submit", class: "cta", text: "Entrar" }),
+    err);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.textContent = "";
+    const res = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: field.value.trim() }) });
+    if (res.ok) { setCode(field.value.trim()); unlockChat(); }
+    else err.textContent = res.status === 429 ? "Demasiados intentos. Prueba en una hora." : "Código incorrecto.";
+  });
+  messagesBox.replaceChildren(form);
+  setTimeout(() => field.focus(), 0);
+}
+
+function unlockChat() {
+  input.disabled = false; sendBtn.disabled = false;
+  messagesBox.replaceChildren();
+  if (state.items.length) state.items.forEach(renderStored); else renderEmpty();
+  scrollDown();
+}
 
 /* ---------------- chat ---------------- */
 const messagesBox = $("#messages");
@@ -323,6 +364,7 @@ function renderEmpty() {
 
 async function ask(question) {
   question = question.trim();
+  if (chatLocked && !getCode()) { showView("chat"); renderLock(); return; }
   if (!question || busy) return;
   busy = true; sendBtn.disabled = true;
   showView("chat");
@@ -340,6 +382,7 @@ async function ask(question) {
   scrollDown();
 
   const record = { role: "bot", text: "", steps: [], cards: [] };
+  let relock = false;
   const stepNodes = {};
   let text = "", pending = false;
   const paint = () => {
@@ -379,10 +422,14 @@ async function ask(question) {
 
   try {
     const res = await fetch("/api/chat", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ session_id: state.sessionId, message: question }),
     });
-    if (!res.ok) throw new Error(res.status === 409 ? "Todavía estoy respondiendo la pregunta anterior." : `Error del servidor (${res.status}).`);
+    if (res.status === 401) { setCode(""); state.items.pop(); saveState(); relock = true; return; }
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(res.status === 409 ? "Todavía estoy respondiendo la pregunta anterior." : detail.detail || `Error del servidor (${res.status}).`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -399,6 +446,11 @@ async function ask(question) {
   } catch (err) {
     handle({ type: "error", message: err.message || "Se cortó la conexión." });
   } finally {
+    if (relock) {  // stored code is no longer valid: ask for it again
+      busy = false;
+      renderLock("El código guardado ya no es válido.");
+      return;
+    }
     thinking.remove();
     for (const n of Object.values(stepNodes)) n.classList.add("done");
     answer.classList.remove("streaming");
@@ -424,8 +476,8 @@ function autosize() { input.style.height = "auto"; input.style.height = `${Math.
 input.addEventListener("input", autosize);
 
 $("#new-chat").addEventListener("click", async () => {
-  if (busy) return;
-  try { await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: state.sessionId }) }); } catch { /* server down: still clear locally */ }
+  if (busy || (chatLocked && !getCode())) return;
+  try { await fetch("/api/reset", { method: "POST", headers: apiHeaders(), body: JSON.stringify({ session_id: state.sessionId }) }); } catch { /* server down: still clear locally */ }
   state = { sessionId: crypto.randomUUID(), items: [] };
   saveState();
   renderEmpty();
@@ -442,6 +494,8 @@ function showView(view) {
 for (const b of document.querySelectorAll(".bottom-nav button")) b.addEventListener("click", () => showView(b.dataset.go));
 
 /* ---------------- boot ---------------- */
-if (state.items.length) state.items.forEach(renderStored); else renderEmpty();
-scrollDown();
+getJSON("/api/config")
+  .then((cfg) => { chatLocked = cfg.chat_locked; })
+  .catch(() => { /* assume open; the server will answer 401 if not */ })
+  .finally(() => { if (chatLocked && !getCode()) renderLock(); else unlockChat(); });
 loadAll();
